@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>化學品管理視覺化報表 - 黑科技完全體修正版</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --card-bg: #1e293b;
+            --accent-orange: #f59e0b;
+            --accent-blue: #38bdf8;
+            --accent-red: #ef4444;
+            --text-main: #f1f5f9; /* 修正：將 muted 改為清晰的淺灰色 */
+            --text-muted: #94a3b8;
+        }
+
+        body { 
+            font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; 
+            background-color: var(--bg-dark); 
+            padding: 20px 40px; color: var(--text-main); margin: 0; 
+        }
+        
+        .container { max-width: 1750px; margin: auto; }
+        
+        .header-section {
+            display: flex; justify-content: space-between; align-items: center; 
+            margin-bottom: 25px; border-bottom: 3px solid #334155; padding-bottom: 15px;
+        }
+        .main-header h1 { margin: 0; font-size: 2.8rem; font-weight: 900; color: var(--accent-orange); letter-spacing: 2px; }
+        .header-date-tag { font-size: 1.2rem; color: var(--text-muted); margin-left: 15px; background: rgba(148, 163, 184, 0.15); padding: 4px 12px; border-radius: 8px; vertical-align: middle; display: none; }
+
+        .upload-card { background: var(--card-bg); padding: 12px 20px; border-radius: 12px; border: 1px solid var(--accent-blue); display: flex; gap: 15px; align-items: center; }
+        .upload-area { border: 2px dashed var(--accent-blue); padding: 8px 15px; text-align: center; cursor: pointer; border-radius: 6px; background: rgba(56, 189, 248, 0.05); color: var(--accent-blue); font-weight: 800; font-size: 0.9rem; }
+        #exportBtn { padding: 8px 15px; background: var(--accent-orange); color: #0f172a; border: none; border-radius: 6px; font-weight: 900; cursor: pointer; display: none; }
+
+        .main-grid { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 20px; }
+        .full-width-card { grid-column: span 3; }
+
+        .card { background: var(--card-bg); padding: 20px; border-radius: 18px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); border: 1px solid #334155; display: flex; flex-direction: column; }
+        h2 { margin: 0 0 15px 0; color: var(--accent-orange); font-size: 1.25rem; font-weight: 800; display: flex; align-items: center; gap: 10px; border-left: 4px solid var(--accent-orange); padding-left: 12px; }
+
+        .filter-box { background: rgba(15, 23, 42, 0.4); padding: 8px 12px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; font-size: 0.9rem; }
+        
+        .total-badge { background: rgba(148, 163, 184, 0.08); padding: 12px; border-radius: 12px; text-align: center; font-weight: 700; font-size: 1rem; margin-top: auto; cursor: pointer; transition: 0.3s; border: 1px solid rgba(255,255,255,0.05); }
+        .total-badge:hover { background: rgba(245, 158, 11, 0.15); transform: translateY(-2px); border-color: var(--accent-orange); }
+        .total-num { color: var(--accent-orange); font-size: 1.3rem; margin: 0 5px; }
+
+        .chart-container { flex-grow: 1; min-height: 280px; position: relative; }
+
+        /* 明細表格樣式 (優化亮莫蘭迪系) */
+        #detailSection { display: none; margin-top: 5px; grid-column: span 3; border: 1px solid var(--accent-blue); background: linear-gradient(180deg, #1e293b 0%, #161e2d 100%); }
+        .detail-table { width: 100%; border-collapse: collapse; margin-top: 15px; background: rgba(15, 23, 42, 0.4); border-radius: 10px; overflow: hidden; }
+        .detail-table th { background: #334155; color: var(--accent-blue); padding: 12px; text-align: left; border-bottom: 2px solid #1e293b; }
+        .detail-table td { padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #e2e8f0; }
+        .status-v { color: #f87171; font-weight: 900; background: rgba(239, 68, 68, 0.1); padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(239, 68, 68, 0.2); }
+        
+        /* SDS 過期警示顏色保持紅色 */
+        .sds-expired { color: var(--accent-red) !important; font-weight: 900; }
+
+        .no-print { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div class="container" id="reportContent">
+    <div class="header-section">
+        <header class="main-header">
+            <h1>化學品管理視覺化報表<span id="targetDate" class="header-date-tag"></span></h1>
+        </header>
+        <div class="upload-card">
+            <div class="upload-area" onclick="document.getElementById('excelFile').click()">
+                <strong>📂 更新 Excel</strong>
+                <input type="file" id="excelFile" accept=".xlsx, .xls" style="display: none">
+            </div>
+            <button id="exportBtn" onclick="exportToPDF()">📥 匯出 PDF</button>
+        </div>
+    </div>
+
+    <div class="main-grid">
+        <div class="card" style="height: 480px;">
+            <h2>📊 全廠區分布</h2>
+            <div class="chart-container" style="margin-bottom: 10px;"><canvas id="pieChart"></canvas></div>
+            <div class="total-badge" onclick="showUnifiedDetail('ALL', 'ALL')">
+                總化學品數量：<span class="total-num" id="totalItems">0</span> (點擊查看清單)
+            </div>
+        </div>
+
+        <div class="card" style="height: 480px;">
+            <h2>⚠️ 公共危險物品分析</h2>
+            <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 10px;">
+                <div style="height: 180px;"><canvas id="dangerChart"></canvas></div>
+                <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; flex-grow: 1;">
+                    <p style="color: var(--accent-orange); font-size: 0.8rem; font-weight: bold; margin: 0 0 5px 0; text-align: center;">各廠區列管數量分布 (點擊Bar看明細)</p>
+                    <div style="height: 150px;"><canvas id="dangerFactoryChart"></canvas></div>
+                </div>
+            </div>
+            <div class="total-badge" onclick="showUnifiedDetail('ALL', 'V')">
+                列管總數：<span class="total-num" id="dangerItems">0</span>
+            </div>
+        </div>
+
+        <div class="card" style="height: 480px;">
+            <h2>🚨 廠區公共危險物品管制量監控</h2>
+            <div class="filter-box">
+                <strong>📍 監控：</strong>
+                <div id="regCheckboxes" class="checkbox-group"></div>
+            </div>
+            <div class="chart-container"><canvas id="regChart"></canvas></div>
+        </div>
+
+        <div id="detailSection" class="card full-width-card">
+            <h2 id="detailTitle">🔍 資料明細清單</h2>
+            <div style="overflow-x: auto;">
+                <table class="detail-table">
+                    <thead><tr><th>廠區</th><th>化學品名稱</th><th>目前庫存 (L)</th><th>公共危險物</th><th>SDS建表日期</th></tr></thead>
+                    <tbody id="detailBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card full-width-card" style="height: 500px;">
+            <h2>⚠️ 廠區庫存預警 (僅顯示列管物品)</h2>
+            <div class="filter-box">
+                <span id="stockFilterInfo" style="color: var(--accent-blue); font-weight: bold;">[當前顯示：所有廠區]</span>
+                <button onclick="resetStockChart()" style="margin-left:10px; cursor:pointer; font-size: 0.8rem; border-radius: 4px; border:1px solid var(--accent-orange); background:transparent; color:var(--accent-orange); padding: 2px 8px;">🔄 重設視圖</button>
+            </div>
+            <div class="chart-container"><canvas id="stockChart"></canvas></div>
+        </div>
+    </div>
+</div>
+<script>
+    let fullData = []; 
+    let charts = {};
+
+    // 註冊數據標籤外掛
+    Chart.register(ChartDataLabels);
+    Chart.defaults.color = '#94a3b8';
+    Chart.defaults.font.weight = 'bold';
+
+    // --- 重點：自動載入邏輯開始 ---
+    window.onload = function() {
+        // 1. 先檢查有沒有嵌入的數據（為了兼容你之前生成的「長官版」）
+        if (typeof embedded_fullData !== 'undefined') {
+            fullData = embedded_fullData;
+            renderAll();
+            return;
+        }
+
+        // 2. 如果沒有嵌入數據，自動抓取 GitHub 資料夾下的 data.xlsx
+        fetch('data.xlsx') 
+            .then(res => {
+                if (!res.ok) throw new Error("尚未偵測到 data.xlsx 檔案");
+                return res.arrayBuffer();
+            })
+            .then(buffer => {
+                const data = new Uint8Array(buffer);
+                const workbook = XLSX.read(data, { type: 'array' });
+                fullData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: "" });
+                renderAll();
+            })
+            .catch(err => {
+                console.log("自動讀取失敗，等待手動上傳:", err);
+                // 這裡保留手動上傳功能作為備案
+            });
+    };
+
+    // 將所有渲染動作打包，方便重複使用
+    function renderAll() {
+        if (!fullData || fullData.length === 0) return;
+
+        const dateEl = document.getElementById('targetDate');
+        dateEl.innerText = `${fullData[0]['年分'] || ''} ${fullData[0]['月份'] || ''}`;
+        dateEl.style.display = 'inline-block';
+
+        initFilters();
+        renderPieChart();
+        renderDangerCharts();
+        updateRegChart();
+        updateStockChart('ALL'); 
+        document.getElementById('exportBtn').style.display = 'block'; 
+    }
+    // --- 重點：自動載入邏輯結束 ---
+
+    // 這裡保留原本手動更新按鈕的功能，以防萬一
+    document.getElementById('excelFile').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            fullData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: "" });
+            renderAll();
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    // ... 之後的 initFilters, renderPieChart 等函式保持不變 ...
+    function initFilters() {
+        const factories = [...new Set(fullData.map(item => String(item['廠區'] || '').trim()).filter(Boolean))];
+        renderCheckboxes('regCheckboxes', factories, updateRegChart);
+    }
+
+    function renderCheckboxes(containerId, factories, onChangeFn) {
+        const container = document.getElementById(containerId);
+        container.innerHTML = '';
+        factories.forEach(f => {
+            const label = document.createElement('label');
+            label.style.marginRight = "10px";
+            label.innerHTML = `<input type="checkbox" value="${f}" checked> ${f}`;
+            label.querySelector('input').onchange = onChangeFn;
+            container.appendChild(label);
+        });
+    }
+
+    // SDS 日期邏輯判斷
+    function checkSdsExpired(dateStr) {
+        if (!dateStr) return { expired: false, text: '-' };
+        const sdsDate = new Date(dateStr);
+        if (isNaN(sdsDate.getTime())) return { expired: false, text: dateStr };
+        
+        const today = new Date();
+        const threeYearsAgo = new Date();
+        threeYearsAgo.setFullYear(today.getFullYear() - 3);
+
+        const isExpired = sdsDate < threeYearsAgo;
+        return { 
+            expired: isExpired, 
+            text: isExpired ? `⚠️ ${dateStr}` : dateStr 
+        };
+    }
+
+    // 上排黑科技：跳轉到特定廠區的明細
+    function showUnifiedDetail(factory, dangerType, chemicalName = null) {
+        const section = document.getElementById('detailSection');
+        const body = document.getElementById('detailBody');
+        const title = document.getElementById('detailTitle');
+        let filtered = fullData;
+
+        if (factory !== 'ALL') filtered = filtered.filter(d => String(d['廠區']) === factory);
+        if (dangerType === 'V') filtered = filtered.filter(d => String(d['公共危險物品']).toUpperCase() === 'V');
+        if (dangerType === 'NONE') filtered = filtered.filter(d => String(d['公共危險物品']).toUpperCase() !== 'V');
+        if (chemicalName) filtered = filtered.filter(d => String(d['化學品']) === chemicalName);
+
+        title.innerText = `🔍 明細：${factory === 'ALL' ? '全廠' : factory + ' 廠'} ${chemicalName ? '- ' + chemicalName : ''}`;
+        body.innerHTML = '';
+        filtered.forEach(row => {
+            const tr = document.createElement('tr');
+            const sdsInfo = checkSdsExpired(row['SDS建表日期']);
+            tr.innerHTML = `<td>${row['廠區']}</td><td>${row['化學品']}</td><td>${row['目前庫存量']}</td><td><span class="${row['公共危險物品'] === 'V' ? 'status-v' : ''}">${row['公共危險物品'] || '-'}</span></td><td class="${sdsInfo.expired ? 'sds-expired' : ''}">${sdsInfo.text}</td>`;
+            body.appendChild(tr);
+        });
+        section.style.display = 'block';
+        section.scrollIntoView({ behavior: 'smooth' });
+    }
+
+function renderPieChart() {
+    const counts = {};
+    fullData.forEach(row => { const f = String(row['廠區'] || '').trim(); if (f) counts[f] = (counts[f] || 0) + 1; });
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    document.getElementById('totalItems').innerText = total;
+
+    if (charts.pie) charts.pie.destroy();
+    charts.pie = new Chart(document.getElementById('pieChart'), {
+        type: 'pie',
+        data: {
+            labels: Object.keys(counts),
+            datasets: [{ data: Object.values(counts), backgroundColor: ['#FFD166', '#4CC9F0', '#B79CED', '#06D6A0', '#EF476F'], borderColor: '#1e293b', borderWidth: 3 }]
+        },
+        options: { 
+            maintainAspectRatio: false, 
+            plugins: { 
+                legend: { 
+                    position: 'bottom', 
+                    labels: { color: '#ffffff', font: { size: 14 } } // 修正：圖例文字強制白色
+                },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => ` ${ctx.label}: ${ctx.raw} 件 (${((ctx.raw/total)*100).toFixed(1)}%)` // 修正：滑鼠移上去看百分比
+                    }
+                },
+                datalabels: { display: false } // 修正：圓餅圖內不顯示數字，避免雜亂與報錯
+            },
+            onClick: (e, el) => { if (el.length > 0) showUnifiedDetail(Object.keys(counts)[el[0].index], 'ALL'); }
+        }
+    });
+}
+    function renderDangerCharts() {
+        const dangerData = fullData.filter(d => String(d['公共危險物品']).toUpperCase() === 'V');
+        document.getElementById('dangerItems').innerText = dangerData.length;
+        if (charts.danger) charts.danger.destroy();
+        charts.danger = new Chart(document.getElementById('dangerChart'), {
+            type: 'doughnut',
+            data: { labels: ['列管 (V)', '非列管'], datasets: [{ data: [dangerData.length, fullData.length - dangerData.length], backgroundColor: ['#ef4444', '#334155'], borderWidth: 2, borderColor: '#1e293b' }] },
+            options: { maintainAspectRatio: false, cutout: '75%', plugins: { legend: { position: 'right', labels: { color: '#ffffff' } } }, onClick: (e, el) => { if (el.length > 0) showUnifiedDetail('ALL', el[0].index === 0 ? 'V' : 'NONE'); } }
+        });
+
+// ... 前半段 dangerChart (Doughnut) 保持不變 ...
+    
+    const factoryCounts = {};
+    dangerData.forEach(row => { const f = row['廠區']; factoryCounts[f] = (factoryCounts[f] || 0) + 1; });
+    if (charts.dangerFactory) charts.dangerFactory.destroy();
+    charts.dangerFactory = new Chart(document.getElementById('dangerFactoryChart'), {
+        type: 'bar',
+        data: { labels: Object.keys(factoryCounts), datasets: [{ label: '數量', data: Object.values(factoryCounts), backgroundColor: 'rgba(239, 68, 68, 0.8)', borderRadius: 4, barThickness: 12 }] },
+        options: { 
+            indexAxis: 'y', 
+            maintainAspectRatio: false, 
+            scales: { 
+                x: { display: true, ticks: { color: '#ffffff' }, grid: { color: 'rgba(255,255,255,0.1)' } }, // 修正：強制顯示 X 軸座標
+                y: { ticks: { color: '#ffffff' }, grid: { display: false } } 
+            }, 
+            plugins: { 
+                legend: { display: false },
+                datalabels: { display: false } // 修正：移除 Bar 上的數字標籤
+            }, 
+            onClick: (e, el) => { if (el.length > 0) showUnifiedDetail(Object.keys(factoryCounts)[el[0].index], 'V'); } 
+        }
+    });
+}
+
+    function updateRegChart() {
+        const selected = Array.from(document.querySelectorAll('#regCheckboxes input:checked')).map(cb => cb.value);
+        const filtered = fullData.filter(item => selected.includes(String(item['廠區'] || '').trim()));
+        const regTotals = {};
+        filtered.forEach(row => { const f = row['廠區']; regTotals[f] = (regTotals[f] || 0) + parseFloat(row['係數'] || 0); });
+        
+        if (charts.reg) charts.reg.destroy();
+        const labels = Object.keys(regTotals);
+        charts.reg = new Chart(document.getElementById('regChart'), {
+            type: 'bar',
+            data: { labels: labels, datasets: [{ label: '各廠區係數總和', data: Object.values(regTotals), backgroundColor: Object.values(regTotals).map(v => v >= 1 ? '#ef4444' : '#38bdf8'), borderRadius: 8 }] },
+            options: { 
+                maintainAspectRatio: false, 
+                scales: { x: { ticks: { color: '#ffffff' } }, y: { grid: { color: 'rgba(148, 163, 184, 0.1)' }, ticks: { color: '#ffffff' } } },
+                plugins: { 
+                    annotation: { annotations: { line1: { type: 'line', yMin: 1, yMax: 1, borderColor: '#ef4444', borderWidth: 4, borderDash: [6, 6] } } },
+                    datalabels: { // 修正：確保條形圖上方數值文字為白色
+                        anchor: 'end', align: 'top', color: '#ffffff', font: { weight: 'bold', size: 14 },
+                        formatter: v => v.toFixed(2) 
+                    }
+                },
+                onClick: (e, el) => { if (el.length > 0) {
+                    const factory = labels[el[0].index];
+                    // 上排長條圖黑科技：同時更新下排圖表和中間明細
+                    updateStockChart(factory); 
+                    showUnifiedDetail(factory, 'V');
+                } }
+            }
+        });
+    }
+
+    // 下排黑科技聯動：更新中間明細 (找回消失的功能)
+    function updateStockChart(filterFactory) {
+        const infoEl = document.getElementById('stockFilterInfo');
+        let filtered = fullData.filter(d => String(d['公共危險物品']).toUpperCase() === 'V'); 
+        
+        if (filterFactory !== 'ALL') {
+            filtered = filtered.filter(d => String(d['廠區']) === filterFactory);
+            infoEl.innerText = `[當前顯示：${filterFactory} 廠區]`;
+        } else {
+            infoEl.innerText = `[當前顯示：所有廠區]`;
+        }
+        
+        // 找回消失的黑科技：為連動明細準備數據
+        const labels = [], current = [], max = [], actualChemicals = [];
+        filtered.forEach(row => {
+            // 修正 10：圖例文字muted改清晰淺灰
+            labels.push(`${row['化學品']} (${row['廠區']})`);
+            current.push(parseFloat(row['目前庫存量']));
+            max.push(parseFloat(row['建議最大庫存量']));
+            actualChemicals.push({ name: row['化學品'], fac: row['廠區'] });
+        });
+
+        if (charts.stock) charts.stock.destroy();
+        charts.stock = new Chart(document.getElementById('stockChart'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: '目前庫存', data: current, backgroundColor: '#f59e0b', borderRadius: 5 },
+                    { label: '最大建議量', data: max, backgroundColor: 'rgba(148, 163, 184, 0.2)', borderRadius: 5 }
+                ]
+            },
+            // 在 updateStockChart 的 Chart 定義中找到 options 部分
+options: { 
+    indexAxis: 'y', 
+    maintainAspectRatio: false, 
+    scales: { 
+        x: { ticks: { callback: v => v + " (L)", color: '#ffffff' } }, 
+        y: { ticks: { color: '#ffffff' } } 
+    },
+    plugins: { 
+        legend: { labels: { color: '#ffffff' } },
+        datalabels: { display: false } // 修正：下排預警圖也移除 Bar 上的數字
+    },
+    onClick: (e, el) => { /* ...原本的 onClick 邏輯... */ }
+}        });
+    }
+
+    // 修正 10：找回重設功能
+    function resetStockChart() { updateStockChart('ALL'); }
+
+    async function exportToPDF() {
+        const { jsPDF } = window.jspdf;
+        document.querySelectorAll('.upload-card, #exportBtn').forEach(el => el.style.visibility = 'hidden');
+        const element = document.getElementById('reportContent');
+        const canvas = await html2canvas(element, { scale: 2, backgroundColor: '#0f172a' });
+        const pdf = new jsPDF('l', 'mm', 'a3');
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, pdfWidth, imgHeight);
+        pdf.save(`化學品管理報表_${new Date().getTime()}.pdf`);
+        document.querySelectorAll('.upload-card, #exportBtn').forEach(el => el.style.visibility = 'visible');
+    }
+</script>
+</body>
+</html>
